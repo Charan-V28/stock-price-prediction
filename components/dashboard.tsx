@@ -15,6 +15,11 @@ import {
   Database,
   Info,
   LoaderCircle,
+  MoreHorizontal,
+  Star,
+  ArrowUp,
+  ArrowDown,
+  Trash2,
   Search,
   Settings2,
   ShieldCheck,
@@ -257,8 +262,15 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
   const [watchlist, setWatchlist] = useState(WATCHLIST);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addTickerOpen, setAddTickerOpen] = useState(false);
-  const [tickerDraft, setTickerDraft] = useState("");
   const [tickerError, setTickerError] = useState("");
+  const [tickerSearch, setTickerSearch] = useState("");
+  const [tickerMatches, setTickerMatches] = useState<Array<{ symbol: string; name: string }>>([]);
+  const [tickerSearchBusy, setTickerSearchBusy] = useState(false);
+  const [tickerSearchMessage, setTickerSearchMessage] = useState("");
+  const [selectedTicker, setSelectedTicker] = useState<{ symbol: string; name: string } | null>(null);
+  const [tickerNames, setTickerNames] = useState<Record<string, string>>({});
+  const [favoriteTickers, setFavoriteTickers] = useState<string[]>([]);
+  const [openWatchMenu, setOpenWatchMenu] = useState<string | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Array<{ id: number; title: string; detail: string; error?: boolean }>>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -277,6 +289,40 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
     ? STOCKS.filter(({ symbol: itemSymbol, name }) => `${itemSymbol} ${name}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 7)
     : [];
   const stockSuggestions = remoteSuggestions.length ? remoteSuggestions : localStockSuggestions;
+  const localTickerMatches = useMemo(() => tickerSearch.trim().length >= 1
+    ? STOCKS.filter(({ symbol: itemSymbol, name }) => `${itemSymbol} ${name}`.toLowerCase().includes(tickerSearch.trim().toLowerCase())).slice(0, 7)
+    : [], [tickerSearch]);
+
+  useEffect(() => {
+    if (!addTickerOpen) return;
+    const term = tickerSearch.trim();
+    setTickerMatches(localTickerMatches);
+    setTickerSearchMessage("");
+    if (term.length < 2 || localTickerMatches.length) {
+      setTickerSearchBusy(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setTickerSearchBusy(true);
+      try {
+        const response = await fetch(`/api/search?q=${encodeURIComponent(term)}`, { signal: controller.signal });
+        const payload = await response.json() as { results?: Array<{ symbol: string; name: string }>; error?: string };
+        if (!response.ok) throw new Error(payload.error || "Company search is temporarily unavailable.");
+        const matches = payload.results ?? [];
+        setTickerMatches(matches);
+        if (!matches.length) setTickerSearchMessage("No matches found. Try the company’s full name or ticker.");
+      } catch (searchError) {
+        if (controller.signal.aborted) return;
+        setTickerMatches([]);
+        setTickerSearchMessage(searchError instanceof Error ? searchError.message : "Company search is temporarily unavailable.");
+      } finally {
+        if (!controller.signal.aborted) setTickerSearchBusy(false);
+      }
+    }, 320);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [addTickerOpen, tickerSearch, localTickerMatches]);
 
   const load = useCallback(async (nextSymbol: string, nextHorizon: number) => {
     setLoading(true);
@@ -309,6 +355,16 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
       if (savedWatchlist) {
         const parsed: unknown = JSON.parse(savedWatchlist);
         if (Array.isArray(parsed) && parsed.length <= 12 && parsed.every((item) => typeof item === "string" && /^[A-Z0-9.^_-]{1,15}$/.test(item))) setWatchlist(parsed);
+      }
+      const savedTickerNames = localStorage.getItem("signal.watchlistNames.v1");
+      if (savedTickerNames) {
+        const parsed: unknown = JSON.parse(savedTickerNames);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) setTickerNames(parsed as Record<string, string>);
+      }
+      const savedFavorites = localStorage.getItem("signal.watchlistFavorites.v1");
+      if (savedFavorites) {
+        const parsed: unknown = JSON.parse(savedFavorites);
+        if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) setFavoriteTickers(parsed);
       }
       const savedHorizon = Number(localStorage.getItem("signal.defaultHorizon.v1"));
       if ([5, 10, 20].includes(savedHorizon)) defaultHorizon = savedHorizon;
@@ -432,13 +488,60 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
     try { localStorage.setItem("signal.watchlist.v1", JSON.stringify(next)); } catch { /* Session still works without storage. */ }
   }
 
+  function chooseTickerForWatchlist(stock: { symbol: string; name: string }) {
+    setSelectedTicker(stock);
+    setTickerSearchMessage("");
+    setTickerError("");
+  }
+
+  function openAddTickerDialog() {
+    setTickerSearch("");
+    setTickerMatches([]);
+    setTickerSearchMessage("");
+    setSelectedTicker(null);
+    setTickerError("");
+    setOpenWatchMenu(null);
+    setAddTickerOpen(true);
+  }
+
   function addTicker(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const ticker = tickerDraft.trim().toUpperCase();
-    if (!/^[A-Z0-9.^_-]{1,15}$/.test(ticker)) { setTickerError("Enter a valid ticker, like IBM or BRK.B."); return; }
-    if (watchlist.includes(ticker)) { setTickerError(`${ticker} is already in your watchlist.`); return; }
-    persistWatchlist([...watchlist, ticker].slice(-12));
-    setTickerError(""); setTickerDraft(""); setAddTickerOpen(false); setQuery(ticker); void load(ticker, horizon);
+    if (!selectedTicker) { setTickerError("Choose a company from the search results first."); return; }
+    const { symbol: ticker, name } = selectedTicker;
+    if (watchlist.includes(ticker)) { setTickerError(`${name} (${ticker}) is already in your watchlist.`); return; }
+    if (watchlist.length >= 12) { setTickerError("Your watchlist is full. Remove a ticker before adding another."); return; }
+    const nextNames = { ...tickerNames, [ticker]: name };
+    setTickerNames(nextNames);
+    try { localStorage.setItem("signal.watchlistNames.v1", JSON.stringify(nextNames)); } catch { /* Session still works without storage. */ }
+    persistWatchlist([...watchlist, ticker]);
+    setTickerError(""); setTickerSearch(""); setSelectedTicker(null); setTickerMatches([]); setAddTickerOpen(false); setQuery(ticker); void load(ticker, horizon);
+  }
+
+  function toggleFavorite(ticker: string) {
+    const favoriting = !favoriteTickers.includes(ticker);
+    const nextFavorites = favoriting ? [...favoriteTickers, ticker] : favoriteTickers.filter((item) => item !== ticker);
+    setFavoriteTickers(nextFavorites);
+    try { localStorage.setItem("signal.watchlistFavorites.v1", JSON.stringify(nextFavorites)); } catch { /* Session still works without storage. */ }
+    if (favoriting) persistWatchlist([ticker, ...watchlist.filter((item) => item !== ticker)]);
+    setOpenWatchMenu(null);
+  }
+
+  function moveTicker(ticker: string, direction: -1 | 1) {
+    const index = watchlist.indexOf(ticker);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= watchlist.length) return;
+    const next = [...watchlist];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    persistWatchlist(next);
+    setOpenWatchMenu(null);
+  }
+
+  function removeTicker(ticker: string) {
+    persistWatchlist(watchlist.filter((item) => item !== ticker));
+    const nextFavorites = favoriteTickers.filter((item) => item !== ticker);
+    setFavoriteTickers(nextFavorites);
+    try { localStorage.setItem("signal.watchlistFavorites.v1", JSON.stringify(nextFavorites)); } catch { /* Session still works without storage. */ }
+    setOpenWatchMenu(null);
   }
 
   const expectedReturn = data?.forecast.length
@@ -467,14 +570,23 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
           <a className="nav-item" href="#model"><Sparkles size={17} /><span>Model lab</span></a>
           <a className="nav-item" href="#watchlist"><TrendingUp size={17} /><span>Watchlist</span><span className="nav-count">{watchlist.length}</span></a>
         </nav>
-          <div className="nav-group-label watch-label" id="watchlist">YOUR WATCHLIST <button className="tiny-plus" aria-label="Add ticker" onClick={() => { setTickerError(""); setAddTickerOpen(true); }}>+</button></div>
+          <div className="nav-group-label watch-label" id="watchlist">YOUR WATCHLIST <button className="tiny-plus" aria-label="Add ticker" onClick={openAddTickerDialog}>+</button></div>
         <div className="watchlist">
           {watchlist.map((ticker, index) => (
-            <button className={symbol === ticker ? "watch-row selected" : "watch-row"} key={ticker} onClick={() => { setQuery(ticker); void load(ticker, horizon); }}>
-              <span className={`watch-icon watch-${index % 5}`}>{initials(ticker)}</span>
-              <span className="watch-ticker">{ticker}<small>{COMPANY_NAMES[ticker] || "Stock ticker"}</small></span>
-              <span className="watch-spark">{index % 2 ? "⌁" : "⌁"}</span>
-            </button>
+            <div className="watch-item" key={ticker}>
+              <button className={symbol === ticker ? "watch-row selected" : "watch-row"} onClick={() => { setOpenWatchMenu(null); setQuery(ticker); void load(ticker, horizon); }}>
+                <span className={`watch-icon watch-${index % 5}`}>{initials(ticker)}</span>
+                <span className="watch-ticker">{ticker}<small>{tickerNames[ticker] || COMPANY_NAMES[ticker] || "Stock ticker"}</small></span>
+                {favoriteTickers.includes(ticker) ? <Star className="watch-favorite" size={13} fill="currentColor" aria-label="Favorite" /> : <span className="watch-spark">⌁</span>}
+              </button>
+              <button className="watch-more" aria-label={`Options for ${ticker}`} aria-expanded={openWatchMenu === ticker} onClick={() => setOpenWatchMenu(openWatchMenu === ticker ? null : ticker)}><MoreHorizontal size={16}/></button>
+              {openWatchMenu === ticker && <div className="watch-item-menu" role="menu" aria-label={`${ticker} options`}>
+                <button role="menuitem" onClick={() => toggleFavorite(ticker)}><Star size={13} fill={favoriteTickers.includes(ticker) ? "currentColor" : "none"}/>{favoriteTickers.includes(ticker) ? "Remove favorite" : "Add to favorites"}</button>
+                <button role="menuitem" onClick={() => moveTicker(ticker, -1)} disabled={index === 0}><ArrowUp size={13}/>Move up</button>
+                <button role="menuitem" onClick={() => moveTicker(ticker, 1)} disabled={index === watchlist.length - 1}><ArrowDown size={13}/>Move down</button>
+                <button role="menuitem" className="watch-remove-action" onClick={() => removeTicker(ticker)}><Trash2 size={13}/>Remove from watchlist</button>
+              </div>}
+            </div>
           ))}
         </div>
         <div className="sidebar-bottom">
@@ -594,7 +706,14 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
         </div>
       </section>
       {mobileNav && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
-      {addTickerOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAddTickerOpen(false); }}><section className="app-dialog" role="dialog" aria-modal="true" aria-labelledby="add-ticker-title"><button className="dialog-close" aria-label="Close" onClick={() => setAddTickerOpen(false)}>×</button><span className="dialog-kicker">WATCHLIST</span><h2 id="add-ticker-title">Add a ticker</h2><p>Track another US-listed symbol in your personal watchlist.</p><form onSubmit={addTicker}><label htmlFor="ticker-draft">Ticker symbol</label><input id="ticker-draft" autoFocus value={tickerDraft} onChange={(event) => { setTickerDraft(event.target.value.toUpperCase()); setTickerError(""); }} placeholder="e.g. AMZN" maxLength={15} />{tickerError && <div className="dialog-error" role="alert">{tickerError}</div>}<div className="dialog-actions"><button type="button" className="dialog-secondary" onClick={() => setAddTickerOpen(false)}>Cancel</button><button type="submit" className="dialog-primary">Add and forecast <ArrowRight size={14} /></button></div></form></section></div>}
+      {addTickerOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAddTickerOpen(false); }}><section className="app-dialog watchlist-dialog" role="dialog" aria-modal="true" aria-labelledby="add-ticker-title"><button className="dialog-close" aria-label="Close" onClick={() => setAddTickerOpen(false)}>×</button><span className="dialog-kicker">WATCHLIST</span><h2 id="add-ticker-title">Add a stock</h2><p>Search by company name or ticker. Select a match to confirm its symbol.</p><form onSubmit={addTicker}><label htmlFor="ticker-draft">Company or ticker</label><input id="ticker-draft" autoFocus value={tickerSearch} onChange={(event) => { setTickerSearch(event.target.value); setSelectedTicker(null); setTickerError(""); }} placeholder="Try Amazon or AMZN" autoComplete="off" role="combobox" aria-expanded={tickerMatches.length > 0} aria-controls="watchlist-stock-results" />
+        {(tickerMatches.length > 0 || tickerSearchBusy || tickerSearchMessage) && <div className="watch-search-results" id="watchlist-stock-results" role="listbox" aria-label="Company matches">
+          {tickerMatches.map((stock) => <button type="button" className="watch-search-result" key={stock.symbol} role="option" aria-selected={selectedTicker?.symbol === stock.symbol} onClick={() => chooseTickerForWatchlist(stock)}><span className="watch-result-mark">{initials(stock.symbol)}</span><span className="watch-result-name"><strong>{stock.name}</strong><small>{stock.symbol}</small></span><ArrowRight size={14}/></button>)}
+          {tickerSearchBusy && <div className="watch-search-message"><LoaderCircle size={14} className="spinner"/>Searching company directory…</div>}
+          {!tickerSearchBusy && tickerSearchMessage && <div className="watch-search-message" role="status">{tickerSearchMessage}</div>}
+        </div>}
+        {selectedTicker && <div className="watch-selected-stock"><span className="watch-selected-check">✓</span><span><small>SELECTED STOCK</small><strong>{selectedTicker.name}</strong></span><b>{selectedTicker.symbol}</b></div>}
+        {tickerError && <div className="dialog-error" role="alert">{tickerError}</div>}<div className="dialog-actions"><button type="button" className="dialog-secondary" onClick={() => setAddTickerOpen(false)}>Cancel</button><button type="submit" className="dialog-primary" disabled={!selectedTicker}>Add and forecast <ArrowRight size={14} /></button></div></form></section></div>}
       {settingsOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><section className="app-dialog settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button className="dialog-close" aria-label="Close" onClick={() => setSettingsOpen(false)}>×</button><span className="dialog-kicker">YOUR WORKSPACE</span><h2 id="settings-title">Settings</h2><p>Personalize your profile and the way the forecast lab opens.</p><form className="settings-form" onSubmit={(event) => void saveSettings(event)}><label className="photo-label" htmlFor="profile-photo"><span className="photo-preview">{avatarUrl ? <img src={avatarUrl} alt=""/> : <UserRound size={20}/>}</span><span><strong>Profile photo</strong><small>Choose an image up to 2 MB</small></span><span className="photo-upload"><Upload size={14}/> Upload</span></label><input className="photo-input" id="profile-photo" type="file" accept="image/*" onChange={chooseProfilePhoto}/><label htmlFor="profile-name">Display name</label><input id="profile-name" value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} placeholder="Your name" maxLength={60}/><label htmlFor="settings-default-symbol">Default stock</label><input id="settings-default-symbol" value={defaultSymbol} onChange={(event) => setDefaultSymbol(event.target.value)} placeholder="e.g. AAPL" maxLength={15}/><label htmlFor="default-horizon">Default forecast length</label><select id="default-horizon" value={defaultHorizonDraft} onChange={(event) => setDefaultHorizonDraft(Number(event.target.value))}><option value={5}>5 trading sessions</option><option value={10}>10 trading sessions</option><option value={20}>20 trading sessions</option></select><span className="settings-field-label">Appearance</span><div className="theme-options"><button type="button" className={theme === "dark" ? "theme-choice selected" : "theme-choice"} aria-pressed={theme === "dark"} onClick={() => setTheme("dark")}><Moon size={15}/> Dark</button><button type="button" className={theme === "light" ? "theme-choice selected" : "theme-choice"} aria-pressed={theme === "light"} onClick={() => setTheme("light")}><Sun size={15}/> Light</button></div>{settingsNotice && <p className="settings-save-status" role="status">{settingsNotice}</p>}<div className="settings-note"><UserRound size={15}/><span>{userEmail ? "Your display name is saved to your account. Photo and other preferences stay in this browser." : "Sign in to sync your display name across devices. Your photo and other preferences are saved in this browser."}</span></div><div className="dialog-actions"><button type="button" className="dialog-secondary" onClick={() => setSettingsOpen(false)}>Cancel</button><button type="submit" className="dialog-primary" disabled={settingsBusy}>{settingsBusy ? <LoaderCircle size={14} className="spinner"/> : <Check size={14}/>}Save settings</button></div></form></section></div>}
       {notificationsOpen && <aside className="notification-panel" aria-label="Notifications"><div className="notification-heading"><div><span className="dialog-kicker">ACTIVITY</span><h2>Notifications</h2></div><button className="dialog-close" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}>×</button></div>{notifications.length ? <div className="notification-list">{notifications.map((item) => <article className="notification-item" key={item.id}><span className={item.error ? "notification-icon error" : "notification-icon"}>{item.error ? <TriangleAlert size={15} /> : <Check size={15} />}</span><div><strong>{item.title}</strong><p>{item.detail}</p></div></article>)}</div> : <div className="notifications-empty"><span><Bell size={17} /></span><strong>You’re all caught up</strong><p>Forecast completions and data errors will appear here. Price alerts aren’t configured.</p></div>}<div className="notification-foot">This activity is stored only for this session.</div></aside>}
     </main>
