@@ -21,12 +21,28 @@ import {
   Sparkles,
   TrendingUp,
   TriangleAlert,
+  Sun,
+  Moon,
+  UserRound,
+  Upload,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import type { ApiError, ForecastResponse, Point } from "../lib/types";
+import Link from "next/link";
+import { createClient as createSupabaseBrowserClient } from "../lib/supabase/client";
 
 const WATCHLIST = ["IBM", "AAPL", "MSFT", "NVDA", "TSLA"];
-const COMPANY_NAMES: Record<string, string> = { IBM: "IBM", AAPL: "Apple", MSFT: "Microsoft", NVDA: "NVIDIA", TSLA: "Tesla" };
+const COMPANY_NAMES: Record<string, string> = {
+  IBM: "IBM", AAPL: "Apple Inc.", MSFT: "Microsoft", NVDA: "NVIDIA", TSLA: "Tesla",
+  SPY: "SPDR S&P 500 ETF", AMZN: "Amazon", GOOGL: "Alphabet (Class A)", GOOG: "Alphabet (Class C)", META: "Meta Platforms",
+  AMD: "Advanced Micro Devices", INTC: "Intel", ORCL: "Oracle", CRM: "Salesforce", NFLX: "Netflix", AVGO: "Broadcom",
+  QCOM: "Qualcomm", ADBE: "Adobe", CSCO: "Cisco", COST: "Costco", WMT: "Walmart", JPM: "JPMorgan Chase",
+  BAC: "Bank of America", V: "Visa", MA: "Mastercard", DIS: "Walt Disney", KO: "Coca-Cola", PEP: "PepsiCo",
+  NKE: "Nike", UBER: "Uber Technologies", ABNB: "Airbnb", PYPL: "PayPal", SHOP: "Shopify", TSM: "Taiwan Semiconductor",
+  PLTR: "Palantir", COIN: "Coinbase", F: "Ford Motor", GM: "General Motors", XOM: "Exxon Mobil", CVX: "Chevron",
+  LLY: "Eli Lilly", PFE: "Pfizer", UNH: "UnitedHealth Group", HD: "Home Depot", CAT: "Caterpillar", BA: "Boeing",
+};
+const STOCKS = Object.entries(COMPANY_NAMES).map(([symbol, name]) => ({ symbol, name }));
 const PERIODS = ["1M", "3M", "MAX"] as const;
 type Period = (typeof PERIODS)[number];
 
@@ -227,10 +243,11 @@ function Skeleton() {
   );
 }
 
-export default function Dashboard() {
+export default function Dashboard({ userEmail, profileName: initialProfileName, profileAvatar: initialProfileAvatar }: { userEmail: string | null; profileName: string | null; profileAvatar: string | null }) {
   const [symbol, setSymbol] = useState("IBM");
   const [query, setQuery] = useState("IBM");
   const [horizon, setHorizon] = useState(5);
+  const [defaultHorizonDraft, setDefaultHorizonDraft] = useState(5);
   const [period, setPeriod] = useState<Period>("3M");
   const [data, setData] = useState<ForecastResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -244,6 +261,22 @@ export default function Dashboard() {
   const [tickerError, setTickerError] = useState("");
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Array<{ id: number; title: string; detail: string; error?: boolean }>>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [remoteSuggestions, setRemoteSuggestions] = useState<Array<{ symbol: string; name: string }>>([]);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [profileName, setProfileName] = useState(initialProfileName || userEmail?.split("@")[0] || "Guest");
+  const [nameDraft, setNameDraft] = useState(initialProfileName || userEmail?.split("@")[0] || "");
+  const [avatarUrl, setAvatarUrl] = useState(initialProfileAvatar || "");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [defaultSymbol, setDefaultSymbol] = useState("IBM");
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsNotice, setSettingsNotice] = useState("");
+
+  const localStockSuggestions = query.trim().length >= 1
+    ? STOCKS.filter(({ symbol: itemSymbol, name }) => `${itemSymbol} ${name}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 7)
+    : [];
+  const stockSuggestions = remoteSuggestions.length ? remoteSuggestions : localStockSuggestions;
 
   const load = useCallback(async (nextSymbol: string, nextHorizon: number) => {
     setLoading(true);
@@ -270,6 +303,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     let defaultHorizon = 5;
+    let firstSymbol = "IBM";
     try {
       const savedWatchlist = localStorage.getItem("signal.watchlist.v1");
       if (savedWatchlist) {
@@ -278,20 +312,114 @@ export default function Dashboard() {
       }
       const savedHorizon = Number(localStorage.getItem("signal.defaultHorizon.v1"));
       if ([5, 10, 20].includes(savedHorizon)) defaultHorizon = savedHorizon;
+      const savedSymbol = localStorage.getItem("signal.defaultSymbol.v1");
+      if (savedSymbol && /^[A-Z0-9.^_-]{1,15}$/.test(savedSymbol)) { setDefaultSymbol(savedSymbol); firstSymbol = savedSymbol; }
+      const savedTheme = localStorage.getItem("signal.theme.v1");
+      if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
+      const savedName = userEmail ? localStorage.getItem(`signal.profileName.${userEmail}`) : localStorage.getItem("signal.profileName.guest");
+      if (savedName && !initialProfileName) { setProfileName(savedName); setNameDraft(savedName); }
+      const savedAvatar = localStorage.getItem(userEmail ? `signal.profileAvatar.${userEmail}` : "signal.profileAvatar.guest");
+      if (savedAvatar) setAvatarUrl(savedAvatar);
     } catch { /* Keep the in-memory defaults when browser storage is unavailable. */ }
+    if (initialProfileName) { setProfileName(initialProfileName); setNameDraft(initialProfileName); }
+    if (initialProfileAvatar) setAvatarUrl(initialProfileAvatar);
     setHorizon(defaultHorizon);
-    void load("IBM", defaultHorizon);
+    void load(firstSymbol, defaultHorizon);
     setTime(new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date()));
-  }, [load]);
+  }, [load, initialProfileName, initialProfileAvatar, userEmail]);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("signal.theme.v1", theme); } catch { /* Theme remains active for this visit. */ }
+  }, [theme]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const cleaned = query.trim().toUpperCase();
-    if (!/^[A-Z0-9.^_-]{1,15}$/.test(cleaned)) {
-      setError("Enter a valid ticker symbol, like IBM or AAPL.");
+    const typed = query.trim();
+    const matched = STOCKS.find(({ symbol: itemSymbol, name }) => itemSymbol.toLowerCase() === typed.toLowerCase() || name.toLowerCase() === typed.toLowerCase());
+    const cleaned = matched?.symbol ?? typed.toUpperCase();
+    setSearchError("");
+    if (matched) {
+      setSearchOpen(false);
+      void load(matched.symbol, horizon);
       return;
     }
-    void load(cleaned, horizon);
+    if (/^[A-Z0-9.^_-]{1,15}$/.test(cleaned)) {
+      setSearchOpen(false);
+      setRemoteSuggestions([]);
+      void load(cleaned, horizon);
+      return;
+    }
+    if (typed.length < 2) { setSearchError("Enter a company name or ticker symbol."); return; }
+    setSearchBusy(true);
+    setRemoteSuggestions([]);
+    try {
+      const response = await fetch(`/api/search?q=${encodeURIComponent(typed)}`);
+      const payload = await response.json() as { results?: Array<{ symbol: string; name: string }>; error?: string };
+      if (!response.ok) throw new Error(payload.error || "Company search is temporarily unavailable.");
+      if (!payload.results?.length) throw new Error("No company matches were found. Try the ticker symbol instead.");
+      setRemoteSuggestions(payload.results);
+      setSearchOpen(true);
+      setSearchError("Choose a matching U.S. company below.");
+    } catch (lookupError) {
+      setSearchError(lookupError instanceof Error ? lookupError.message : "Company search is temporarily unavailable.");
+      setSearchOpen(true);
+    } finally { setSearchBusy(false); }
+  }
+
+  function chooseStock(stock: { symbol: string; name: string }) {
+    setQuery(stock.symbol);
+    setSearchOpen(false);
+    setRemoteSuggestions([]);
+    setSearchError("");
+    void load(stock.symbol, horizon);
+  }
+
+  async function saveSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const cleanName = nameDraft.trim();
+    const cleanSymbol = defaultSymbol.trim().toUpperCase();
+    if (cleanName.length < 2) { setSettingsNotice("Enter a name with at least 2 characters."); return; }
+    if (!/^[A-Z0-9.^_-]{1,15}$/.test(cleanSymbol)) { setSettingsNotice("Enter a valid default ticker symbol."); return; }
+    setSettingsBusy(true);
+    setSettingsNotice("");
+    try {
+      if (userEmail) {
+        const supabase = createSupabaseBrowserClient();
+        const { error: updateError } = supabase ? await supabase.auth.updateUser({ data: { full_name: cleanName } }) : { error: new Error("Account settings are unavailable.") };
+        if (updateError) throw updateError;
+      }
+      setProfileName(cleanName);
+      setDefaultSymbol(cleanSymbol);
+      setHorizon(defaultHorizonDraft);
+      try {
+        localStorage.setItem(userEmail ? `signal.profileName.${userEmail}` : "signal.profileName.guest", cleanName);
+        localStorage.setItem("signal.defaultSymbol.v1", cleanSymbol);
+        localStorage.setItem("signal.defaultHorizon.v1", String(defaultHorizonDraft));
+      } catch { /* Saved profile metadata remains available for signed-in users. */ }
+      setSettingsNotice("Your preferences are saved.");
+      if (cleanSymbol !== symbol || defaultHorizonDraft !== horizon) {
+        setQuery(cleanSymbol);
+        void load(cleanSymbol, defaultHorizonDraft);
+      }
+    } catch (saveError) {
+      setSettingsNotice(saveError instanceof Error ? saveError.message : "Could not save your profile. Please try again.");
+    } finally { setSettingsBusy(false); }
+  }
+
+  function chooseProfilePhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setSettingsNotice("Choose an image file for your profile photo."); return; }
+    if (file.size > 2 * 1024 * 1024) { setSettingsNotice("Choose an image smaller than 2 MB."); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") return;
+      setAvatarUrl(reader.result);
+      try { localStorage.setItem(userEmail ? `signal.profileAvatar.${userEmail}` : "signal.profileAvatar.guest", reader.result); }
+      catch { setSettingsNotice("This browser can’t store the image. Try a smaller photo."); }
+    };
+    reader.readAsDataURL(file);
   }
 
   function selectHorizon(days: number) {
@@ -320,7 +448,7 @@ export default function Dashboard() {
   const changeUp = (data?.change ?? 0) >= 0;
 
   return (
-    <main className="app-frame">
+    <main className="app-frame" data-theme={theme}>
       <aside className={mobileNav ? "sidebar open" : "sidebar"}>
         <div className="brand-lockup">
           <div className="brand-mark"><Activity size={20} strokeWidth={2.5} /></div>
@@ -356,8 +484,8 @@ export default function Dashboard() {
             <p>See how a compact LSTM turns past returns into a forecast.</p>
             <a href="#model">Explore the model <ArrowRight size={13} /></a>
           </div>
-          <button className="nav-item settings-link" onClick={() => setSettingsOpen(true)}><Settings2 size={17} /><span>Settings</span></button>
-          <div className="user-row"><div className="user-avatar">TC</div><div><strong>Teja Charan</strong><small>Personal account</small></div><ChevronDown size={14} /></div>
+          <button className="nav-item settings-link" onClick={() => { setNameDraft(profileName); setDefaultHorizonDraft(horizon); setSettingsNotice(""); setSettingsOpen(true); }}><Settings2 size={17} /><span>Settings</span></button>
+          <Link className="user-row" href={userEmail ? "/account" : "/login"} aria-label={userEmail ? "Open your account" : "Sign in or create an account"}><div className="user-avatar">{avatarUrl ? <img src={avatarUrl} alt=""/> : profileName.split(/\s+/).map((part) => part[0]).slice(0, 2).join("").toUpperCase() || "↗"}</div><div><strong>{profileName}</strong><small>{userEmail ?? "Guest profile"}</small></div><ChevronDown size={14} /></Link>
         </div>
       </aside>
 
@@ -368,7 +496,7 @@ export default function Dashboard() {
           <div className="topbar-right">
             <div className="market-status"><span className="status-pulse" /> US MARKET <span className="status-separator">·</span> DAILY</div>
             <button className="top-icon" aria-label="Notifications" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><Bell size={17} />{notifications.length > 0 && <i />}</button>
-            <div className="top-avatar">TC</div>
+            <button className="top-avatar" type="button" onClick={() => { setNameDraft(profileName); setDefaultHorizonDraft(horizon); setSettingsNotice(""); setSettingsOpen(true); }} aria-label="Open your settings" title="Your settings">{avatarUrl ? <img src={avatarUrl} alt=""/> : profileName.split(/\s+/).map((part) => part[0]).slice(0, 2).join("").toUpperCase() || <UserRound size={14} />}</button>
           </div>
         </header>
 
@@ -386,17 +514,20 @@ export default function Dashboard() {
           </div>
 
           <div className="search-row">
-            <form className="ticker-search" onSubmit={submit}>
+            <form className="ticker-search" onSubmit={(event) => void submit(event)}>
               <Search size={17} />
-              <input aria-label="Search ticker" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search ticker…" maxLength={15} />
-              <span className="search-hint">TICKER</span>
-              <button type="submit" disabled={loading}>{loading ? <LoaderCircle size={16} className="spinner" /> : <ArrowRight size={17} />}</button>
+              <div className="stock-search-field"><input aria-label="Search by company or ticker" role="combobox" aria-autocomplete="list" aria-expanded={searchOpen && stockSuggestions.length > 0} aria-controls="stock-suggestions" value={query} onFocus={() => setSearchOpen(true)} onBlur={() => setTimeout(() => setSearchOpen(false), 120)} onChange={(event) => { setQuery(event.target.value); setRemoteSuggestions([]); setSearchError(""); setSearchOpen(true); }} placeholder="Search company or ticker…" maxLength={50} />
+                {searchOpen && stockSuggestions.length > 0 && <div className="stock-suggestions" id="stock-suggestions" role="listbox">{stockSuggestions.map((stock) => <button type="button" role="option" aria-selected="false" key={stock.symbol} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseStock(stock)}><span className="suggestion-symbol">{stock.symbol}</span><span>{stock.name}</span><ArrowRight size={14} /></button>)}</div>}
+              </div>
+              <span className="search-hint" title="Directory lookups use Alpha Vantage and can be subject to its request limits">NAME / TICKER</span>
+              <button type="submit" disabled={loading || searchBusy}>{loading || searchBusy ? <LoaderCircle size={16} className="spinner" /> : <ArrowRight size={17} />}</button>
             </form>
+            {searchError && <p className="stock-search-message" role="status">{searchError}</p>}
             <div className="quick-picks"><span>QUICK PICKS</span>{watchlist.filter((ticker) => ticker !== symbol).slice(0, 4).map((ticker) => <button key={ticker} onClick={() => { setQuery(ticker); void load(ticker, horizon); }}>{ticker}</button>)}</div>
           </div>
 
           {data?.mode === "demo" && (
-            <div className="demo-banner"><Info size={15} /><span><strong>Simulation mode</strong> — the charts use generated sample prices, not real market data.</span><a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noreferrer">Add free data key <ArrowRight size={13} /></a></div>
+            <div className="demo-banner"><Info size={15} /><span><strong>{data.source.includes("limit reached") ? "Provider limit reached" : "Simulation mode"}</strong> — these generated sample prices are not real market data{data.source.includes("limit reached") ? "; live Alpha Vantage data will return when its quota resets." : "."}</span><a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noreferrer">Data provider <ArrowRight size={13} /></a></div>
           )}
           {error && (
             <div className="error-banner"><TriangleAlert size={16} /><span>{error}</span><button onClick={() => void load(symbol, horizon)}>Try again</button></div>
@@ -456,7 +587,7 @@ export default function Dashboard() {
               </div>
             </>
           ) : (
-            <section className="empty-state panel"><div className="empty-icon"><TriangleAlert size={22} /></div><h2>We couldn’t load this forecast</h2><p>{error || "Try another ticker or check your data-provider key."}</p><button className="retry-button" onClick={() => void load(symbol, horizon)}>Try again <ArrowRight size={14} /></button></section>
+            <><section className="empty-state panel"><div className="empty-icon"><TriangleAlert size={22} /></div><h2>We couldn’t load this forecast</h2><p>{error || "Try another ticker or check your data-provider key."}</p><button className="retry-button" onClick={() => void load(symbol, horizon)}>Try again <ArrowRight size={14} /></button></section><section className="panel model-panel model-fallback" id="model"><div className="panel-heading compact-heading"><div><div className="panel-title">Model lab</div><div className="panel-caption">Learn how the LSTM forecast is built</div></div><div className="model-symbol"><Activity size={16}/></div></div><div className="model-flow"><div className="flow-node"><span className="flow-index">01</span><span className="flow-icon"><Database size={15}/></span><strong>Daily closes</strong><small>Price history</small></div><div className="flow-arrow">→</div><div className="flow-node"><span className="flow-index">02</span><span className="flow-icon"><Activity size={15}/></span><strong>LSTM cell</strong><small>20-day return window</small></div><div className="flow-arrow">→</div><div className="flow-node"><span className="flow-index">03</span><span className="flow-icon"><TrendingUp size={15}/></span><strong>Next return</strong><small>Iterative forecast</small></div></div><p className="model-fallback-note">A forecast run is needed to populate model metrics. Try again when market data is available.</p><div className="model-disclaimer"><ShieldCheck size={14}/><span>Educational estimates only. Not investment advice.</span></div></section></>
           )}
 
           <footer className="page-footer"><span>© 2026 SIGNAL LAB</span><span><ShieldCheck size={13} /> Educational use only · Data may be delayed · No investment advice</span><a href="https://www.alphavantage.co/documentation/" target="_blank" rel="noreferrer">Data documentation <ArrowRight size={12} /></a></footer>
@@ -464,7 +595,7 @@ export default function Dashboard() {
       </section>
       {mobileNav && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
       {addTickerOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAddTickerOpen(false); }}><section className="app-dialog" role="dialog" aria-modal="true" aria-labelledby="add-ticker-title"><button className="dialog-close" aria-label="Close" onClick={() => setAddTickerOpen(false)}>×</button><span className="dialog-kicker">WATCHLIST</span><h2 id="add-ticker-title">Add a ticker</h2><p>Track another US-listed symbol in your personal watchlist.</p><form onSubmit={addTicker}><label htmlFor="ticker-draft">Ticker symbol</label><input id="ticker-draft" autoFocus value={tickerDraft} onChange={(event) => { setTickerDraft(event.target.value.toUpperCase()); setTickerError(""); }} placeholder="e.g. AMZN" maxLength={15} />{tickerError && <div className="dialog-error" role="alert">{tickerError}</div>}<div className="dialog-actions"><button type="button" className="dialog-secondary" onClick={() => setAddTickerOpen(false)}>Cancel</button><button type="submit" className="dialog-primary">Add and forecast <ArrowRight size={14} /></button></div></form></section></div>}
-      {settingsOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><section className="app-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button className="dialog-close" aria-label="Close" onClick={() => setSettingsOpen(false)}>×</button><span className="dialog-kicker">PREFERENCES</span><h2 id="settings-title">Forecast settings</h2><p>Choose the default forecast length used when you open a ticker.</p><label htmlFor="default-horizon">Default forecast horizon</label><select id="default-horizon" value={horizon} onChange={(event) => { const value = Number(event.target.value); setHorizon(value); try { localStorage.setItem("signal.defaultHorizon.v1", String(value)); } catch { /* Preference remains active for this session. */ } void load(symbol, value); }}><option value={5}>5 trading sessions</option><option value={10}>10 trading sessions</option><option value={20}>20 trading sessions</option></select><div className="settings-note"><Database size={15} /><span>Data is fetched securely by the server. Provider updates and request limits can affect availability.</span></div><div className="dialog-actions"><button className="dialog-primary" onClick={() => setSettingsOpen(false)}>Done <Check size={14} /></button></div></section></div>}
+      {settingsOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><section className="app-dialog settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button className="dialog-close" aria-label="Close" onClick={() => setSettingsOpen(false)}>×</button><span className="dialog-kicker">YOUR WORKSPACE</span><h2 id="settings-title">Settings</h2><p>Personalize your profile and the way the forecast lab opens.</p><form className="settings-form" onSubmit={(event) => void saveSettings(event)}><label className="photo-label" htmlFor="profile-photo"><span className="photo-preview">{avatarUrl ? <img src={avatarUrl} alt=""/> : <UserRound size={20}/>}</span><span><strong>Profile photo</strong><small>Choose an image up to 2 MB</small></span><span className="photo-upload"><Upload size={14}/> Upload</span></label><input className="photo-input" id="profile-photo" type="file" accept="image/*" onChange={chooseProfilePhoto}/><label htmlFor="profile-name">Display name</label><input id="profile-name" value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} placeholder="Your name" maxLength={60}/><label htmlFor="settings-default-symbol">Default stock</label><input id="settings-default-symbol" value={defaultSymbol} onChange={(event) => setDefaultSymbol(event.target.value)} placeholder="e.g. AAPL" maxLength={15}/><label htmlFor="default-horizon">Default forecast length</label><select id="default-horizon" value={defaultHorizonDraft} onChange={(event) => setDefaultHorizonDraft(Number(event.target.value))}><option value={5}>5 trading sessions</option><option value={10}>10 trading sessions</option><option value={20}>20 trading sessions</option></select><span className="settings-field-label">Appearance</span><div className="theme-options"><button type="button" className={theme === "dark" ? "theme-choice selected" : "theme-choice"} aria-pressed={theme === "dark"} onClick={() => setTheme("dark")}><Moon size={15}/> Dark</button><button type="button" className={theme === "light" ? "theme-choice selected" : "theme-choice"} aria-pressed={theme === "light"} onClick={() => setTheme("light")}><Sun size={15}/> Light</button></div>{settingsNotice && <p className="settings-save-status" role="status">{settingsNotice}</p>}<div className="settings-note"><UserRound size={15}/><span>{userEmail ? "Your display name is saved to your account. Photo and other preferences stay in this browser." : "Sign in to sync your display name across devices. Your photo and other preferences are saved in this browser."}</span></div><div className="dialog-actions"><button type="button" className="dialog-secondary" onClick={() => setSettingsOpen(false)}>Cancel</button><button type="submit" className="dialog-primary" disabled={settingsBusy}>{settingsBusy ? <LoaderCircle size={14} className="spinner"/> : <Check size={14}/>}Save settings</button></div></form></section></div>}
       {notificationsOpen && <aside className="notification-panel" aria-label="Notifications"><div className="notification-heading"><div><span className="dialog-kicker">ACTIVITY</span><h2>Notifications</h2></div><button className="dialog-close" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}>×</button></div>{notifications.length ? <div className="notification-list">{notifications.map((item) => <article className="notification-item" key={item.id}><span className={item.error ? "notification-icon error" : "notification-icon"}>{item.error ? <TriangleAlert size={15} /> : <Check size={15} />}</span><div><strong>{item.title}</strong><p>{item.detail}</p></div></article>)}</div> : <div className="notifications-empty"><span><Bell size={17} /></span><strong>You’re all caught up</strong><p>Forecast completions and data errors will appear here. Price alerts aren’t configured.</p></div>}<div className="notification-foot">This activity is stored only for this session.</div></aside>}
     </main>
   );

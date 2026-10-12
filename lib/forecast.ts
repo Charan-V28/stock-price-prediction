@@ -14,6 +14,15 @@ const COMPANIES: Record<string, string> = {
   GOOGL: "Alphabet Inc.",
   META: "Meta Platforms, Inc.",
   AMD: "Advanced Micro Devices",
+  GOOG: "Alphabet Inc.", INTC: "Intel Corporation", ORCL: "Oracle Corporation", CRM: "Salesforce, Inc.",
+  NFLX: "Netflix, Inc.", AVGO: "Broadcom Inc.", QCOM: "Qualcomm Incorporated", ADBE: "Adobe Inc.",
+  CSCO: "Cisco Systems, Inc.", COST: "Costco Wholesale", WMT: "Walmart Inc.", JPM: "JPMorgan Chase & Co.",
+  BAC: "Bank of America Corporation", V: "Visa Inc.", MA: "Mastercard Incorporated", DIS: "The Walt Disney Company",
+  KO: "The Coca-Cola Company", PEP: "PepsiCo, Inc.", NKE: "NIKE, Inc.", UBER: "Uber Technologies, Inc.",
+  ABNB: "Airbnb, Inc.", PYPL: "PayPal Holdings, Inc.", SHOP: "Shopify Inc.", TSM: "Taiwan Semiconductor Manufacturing",
+  PLTR: "Palantir Technologies Inc.", COIN: "Coinbase Global, Inc.", F: "Ford Motor Company", GM: "General Motors Company",
+  XOM: "Exxon Mobil Corporation", CVX: "Chevron Corporation", LLY: "Eli Lilly and Company", PFE: "Pfizer Inc.",
+  UNH: "UnitedHealth Group Incorporated", HD: "The Home Depot, Inc.", CAT: "Caterpillar Inc.", BA: "The Boeing Company",
 };
 const PRICE_ANCHORS: Record<string, number> = {
   IBM: 260, AAPL: 220, MSFT: 510, NVDA: 175, TSLA: 330,
@@ -259,13 +268,14 @@ async function marketHistory(symbol: string): Promise<{ history: Point[]; source
     headers: { Accept: "application/json", "User-Agent": "SignalForecastLab/1.0" },
     next: { revalidate: 300 },
   });
+  if (response.status === 429) return { history: mockHistory(symbol), source: "Simulated fallback · Alpha Vantage limit reached", mode: "demo" };
   if (!response.ok) throw new Error(`Market data provider returned HTTP ${response.status}. Please retry shortly.`);
   const payload = await response.json() as Record<string, unknown>;
   const seriesKey = Object.keys(payload).find((name) => name.startsWith("Time Series"));
   if (!seriesKey || !payload[seriesKey] || typeof payload[seriesKey] !== "object") {
     const detail = payload.Note ?? payload.Information ?? payload["Error Message"];
     if (typeof detail === "string" && /rate limit|call frequency|requests per (second|minute|day)|premium plans|thank you for using alpha vantage/i.test(detail)) {
-      throw new Error("Alpha Vantage rate-limited this request. Wait a few seconds before trying again; the free plan also has a daily request limit.");
+      return { history: mockHistory(symbol), source: "Simulated fallback · Alpha Vantage limit reached", mode: "demo" };
     }
     if (typeof payload["Error Message"] === "string") {
       throw new Error("Alpha Vantage couldn’t find daily price history for this ticker. Check the symbol and try again.");
