@@ -1,7 +1,8 @@
-import Link from "next/link";
-import { ArrowLeft, Activity, LockKeyhole, Sparkles } from "lucide-react";
+import { Activity, LockKeyhole, Sparkles } from "lucide-react";
 import { getSupabaseConfig } from "../../lib/supabase/config";
 import AuthForm from "../../components/auth-form";
+import { createClient } from "../../lib/supabase/server";
+import { redirect } from "next/navigation";
 
 export const metadata = {
   title: "Sign in · Signal Forecast Lab",
@@ -9,10 +10,13 @@ export const metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const supabase = await createClient();
+  const { data } = supabase ? await supabase.auth.getUser() : { data: { user: null } };
+  if (data.user) redirect("/");
+
   return (
     <main className="auth-page">
-      <Link href="/" className="auth-back"><ArrowLeft size={15} /> Back to forecast lab</Link>
       <div className="auth-shell">
         <section className="auth-story" aria-label="About Signal Forecast Lab">
           <div className="auth-brand"><span className="auth-brand-mark"><Activity size={21} /></span><span><strong>signal<span>.</span></strong><small>FORECAST LAB</small></span></div>
@@ -33,7 +37,7 @@ export default function LoginPage() {
           <p className="auth-terms">By continuing, you agree to use forecasts for learning only. They are not investment advice.</p>
         </section>
       </div>
-      <footer className="auth-footer"><span>© 2026 SIGNAL FORECAST LAB</span><Link href="/">PUBLIC EDUCATIONAL DEMO</Link></footer>
+      <footer className="auth-footer"><span>© 2026 SIGNAL FORECAST LAB</span><span>PRIVATE WORKSPACE · SIGN-IN REQUIRED</span></footer>
     </main>
   );
 }
