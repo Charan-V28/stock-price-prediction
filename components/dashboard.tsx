@@ -20,6 +20,8 @@ import {
   ArrowUp,
   ArrowDown,
   Trash2,
+  Share2,
+  Copy,
   Search,
   Settings2,
   ShieldCheck,
@@ -248,11 +250,11 @@ function Skeleton() {
   );
 }
 
-export default function Dashboard({ userEmail, profileName: initialProfileName, profileAvatar: initialProfileAvatar }: { userEmail: string | null; profileName: string | null; profileAvatar: string | null }) {
-  const [symbol, setSymbol] = useState("IBM");
-  const [query, setQuery] = useState("IBM");
-  const [horizon, setHorizon] = useState(5);
-  const [defaultHorizonDraft, setDefaultHorizonDraft] = useState(5);
+export default function Dashboard({ userEmail, profileName: initialProfileName, profileAvatar: initialProfileAvatar, initialSymbol = null, initialHorizon = null }: { userEmail: string | null; profileName: string | null; profileAvatar: string | null; initialSymbol?: string | null; initialHorizon?: number | null }) {
+  const [symbol, setSymbol] = useState(initialSymbol || "IBM");
+  const [query, setQuery] = useState(initialSymbol || "IBM");
+  const [horizon, setHorizon] = useState(initialHorizon || 5);
+  const [defaultHorizonDraft, setDefaultHorizonDraft] = useState(initialHorizon || 5);
   const [period, setPeriod] = useState<Period>("3M");
   const [data, setData] = useState<ForecastResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -261,6 +263,9 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
   const [mobileNav, setMobileNav] = useState(false);
   const [watchlist, setWatchlist] = useState(WATCHLIST);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareLink, setShareLink] = useState("");
+  const [shareNotice, setShareNotice] = useState("");
   const [addTickerOpen, setAddTickerOpen] = useState(false);
   const [tickerError, setTickerError] = useState("");
   const [tickerSearch, setTickerSearch] = useState("");
@@ -284,6 +289,28 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
   const [defaultSymbol, setDefaultSymbol] = useState("IBM");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsNotice, setSettingsNotice] = useState("");
+
+  useEffect(() => {
+    if (!settingsOpen && !addTickerOpen && !shareOpen && !notificationsOpen && !openWatchMenu) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setSettingsOpen(false);
+      setAddTickerOpen(false);
+      setShareOpen(false);
+      setNotificationsOpen(false);
+      setOpenWatchMenu(null);
+    }
+    function handlePointerDown(event: PointerEvent) {
+      if (!(event.target instanceof Element)) return;
+      if (openWatchMenu && !event.target.closest(".watch-item")) setOpenWatchMenu(null);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [settingsOpen, addTickerOpen, shareOpen, notificationsOpen, openWatchMenu]);
 
   const localStockSuggestions = query.trim().length >= 1
     ? STOCKS.filter(({ symbol: itemSymbol, name }) => `${itemSymbol} ${name}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 7)
@@ -348,8 +375,8 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
   }, []);
 
   useEffect(() => {
-    let defaultHorizon = 5;
-    let firstSymbol = "IBM";
+    let defaultHorizon = initialHorizon || 5;
+    let firstSymbol = initialSymbol || "IBM";
     try {
       const savedWatchlist = localStorage.getItem("signal.watchlist.v1");
       if (savedWatchlist) {
@@ -367,9 +394,9 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
         if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) setFavoriteTickers(parsed);
       }
       const savedHorizon = Number(localStorage.getItem("signal.defaultHorizon.v1"));
-      if ([5, 10, 20].includes(savedHorizon)) defaultHorizon = savedHorizon;
+      if (!initialHorizon && [5, 10, 20].includes(savedHorizon)) defaultHorizon = savedHorizon;
       const savedSymbol = localStorage.getItem("signal.defaultSymbol.v1");
-      if (savedSymbol && /^[A-Z0-9.^_-]{1,15}$/.test(savedSymbol)) { setDefaultSymbol(savedSymbol); firstSymbol = savedSymbol; }
+      if (savedSymbol && /^[A-Z0-9.^_-]{1,15}$/.test(savedSymbol)) { setDefaultSymbol(savedSymbol); if (!initialSymbol) firstSymbol = savedSymbol; }
       const savedTheme = localStorage.getItem("signal.theme.v1");
       if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
       const savedName = userEmail ? localStorage.getItem(`signal.profileName.${userEmail}`) : localStorage.getItem("signal.profileName.guest");
@@ -382,7 +409,7 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
     setHorizon(defaultHorizon);
     void load(firstSymbol, defaultHorizon);
     setTime(new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date()));
-  }, [load, initialProfileName, initialProfileAvatar, userEmail]);
+  }, [load, initialProfileName, initialProfileAvatar, userEmail, initialSymbol, initialHorizon]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -544,6 +571,48 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
     setOpenWatchMenu(null);
   }
 
+  function openShareDialog() {
+    const url = new URL("/", window.location.origin);
+    url.searchParams.set("symbol", data?.symbol || symbol);
+    url.searchParams.set("horizon", String(horizon));
+    setShareLink(url.toString());
+    setShareNotice("");
+    setShareOpen(true);
+  }
+
+  async function copyShareLink() {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareLink);
+      } else {
+        const field = document.querySelector<HTMLInputElement>("#share-stock-link");
+        field?.select();
+        if (!document.execCommand("copy")) throw new Error("Copy isn’t available in this browser.");
+      }
+      setShareNotice("Link copied. Anyone with it can open this stock after signing in.");
+    } catch {
+      setShareNotice("Copy didn’t work. Select the link above and copy it manually.");
+    }
+  }
+
+  async function shareStock() {
+    if (!navigator.share) {
+      await copyShareLink();
+      return;
+    }
+    try {
+      await navigator.share({
+        title: `${data?.companyName || symbol} forecast · Signal Forecast Lab`,
+        text: `View the ${data?.symbol || symbol} stock forecast in Signal Forecast Lab.`,
+        url: shareLink,
+      });
+      setShareNotice("Share sheet opened.");
+    } catch (shareError) {
+      if (shareError instanceof Error && shareError.name === "AbortError") return;
+      setShareNotice("Could not open sharing on this device. Copy the link instead.");
+    }
+  }
+
   const expectedReturn = data?.forecast.length
     ? ((data.forecast[data.forecast.length - 1].price / data.lastPrice) - 1) * 100
     : 0;
@@ -621,7 +690,7 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
             </div>
             <div className="heading-actions">
               <button className="quiet-button"><Clock3 size={14} /> Updated {time || "just now"}</button>
-              <button className="share-button" onClick={() => navigator.clipboard?.writeText(window.location.href)}><ArrowRight size={14} /> Share</button>
+              <button className="share-button" onClick={openShareDialog}><Share2 size={14} /> Share</button>
             </div>
           </div>
 
@@ -714,8 +783,9 @@ export default function Dashboard({ userEmail, profileName: initialProfileName, 
         </div>}
         {selectedTicker && <div className="watch-selected-stock"><span className="watch-selected-check">✓</span><span><small>SELECTED STOCK</small><strong>{selectedTicker.name}</strong></span><b>{selectedTicker.symbol}</b></div>}
         {tickerError && <div className="dialog-error" role="alert">{tickerError}</div>}<div className="dialog-actions"><button type="button" className="dialog-secondary" onClick={() => setAddTickerOpen(false)}>Cancel</button><button type="submit" className="dialog-primary" disabled={!selectedTicker}>Add and forecast <ArrowRight size={14} /></button></div></form></section></div>}
+      {shareOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShareOpen(false); }}><section className="app-dialog share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-stock-title"><button className="dialog-close" aria-label="Close" onClick={() => setShareOpen(false)}>×</button><span className="dialog-kicker">SHARE FORECAST</span><h2 id="share-stock-title">Send this stock</h2><p>Anyone with this link can open the {data?.companyName || symbol} forecast after signing in or creating a free account.</p><label htmlFor="share-stock-link">Private stock link</label><div className="share-link-field"><input id="share-stock-link" value={shareLink} readOnly onFocus={(event) => event.currentTarget.select()} /><button className="share-copy-button" type="button" onClick={() => void copyShareLink()} aria-label="Copy share link" title="Copy link"><Copy size={15}/></button></div>{shareNotice && <p className="share-status" role="status">{shareNotice}</p>}<div className="dialog-actions"><button type="button" className="dialog-secondary" onClick={() => setShareOpen(false)}>Done</button><button type="button" className="dialog-primary" onClick={() => void shareStock()}><Share2 size={14}/> Share link</button></div></section></div>}
       {settingsOpen && <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><section className="app-dialog settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button className="dialog-close" aria-label="Close" onClick={() => setSettingsOpen(false)}>×</button><span className="dialog-kicker">YOUR WORKSPACE</span><h2 id="settings-title">Settings</h2><p>Personalize your profile and the way the forecast lab opens.</p><form className="settings-form" onSubmit={(event) => void saveSettings(event)}><label className="photo-label" htmlFor="profile-photo"><span className="photo-preview">{avatarUrl ? <img src={avatarUrl} alt=""/> : <UserRound size={20}/>}</span><span><strong>Profile photo</strong><small>Choose an image up to 2 MB</small></span><span className="photo-upload"><Upload size={14}/> Upload</span></label><input className="photo-input" id="profile-photo" type="file" accept="image/*" onChange={chooseProfilePhoto}/><label htmlFor="profile-name">Display name</label><input id="profile-name" value={nameDraft} onChange={(event) => setNameDraft(event.target.value)} placeholder="Your name" maxLength={60}/><label htmlFor="settings-default-symbol">Default stock</label><input id="settings-default-symbol" value={defaultSymbol} onChange={(event) => setDefaultSymbol(event.target.value)} placeholder="e.g. AAPL" maxLength={15}/><label htmlFor="default-horizon">Default forecast length</label><select id="default-horizon" value={defaultHorizonDraft} onChange={(event) => setDefaultHorizonDraft(Number(event.target.value))}><option value={5}>5 trading sessions</option><option value={10}>10 trading sessions</option><option value={20}>20 trading sessions</option></select><span className="settings-field-label">Appearance</span><div className="theme-options"><button type="button" className={theme === "dark" ? "theme-choice selected" : "theme-choice"} aria-pressed={theme === "dark"} onClick={() => setTheme("dark")}><Moon size={15}/> Dark</button><button type="button" className={theme === "light" ? "theme-choice selected" : "theme-choice"} aria-pressed={theme === "light"} onClick={() => setTheme("light")}><Sun size={15}/> Light</button></div>{settingsNotice && <p className="settings-save-status" role="status">{settingsNotice}</p>}<div className="settings-note"><UserRound size={15}/><span>{userEmail ? "Your display name is saved to your account. Photo and other preferences stay in this browser." : "Sign in to sync your display name across devices. Your photo and other preferences are saved in this browser."}</span></div><div className="dialog-actions"><button type="button" className="dialog-secondary" onClick={() => setSettingsOpen(false)}>Cancel</button><button type="submit" className="dialog-primary" disabled={settingsBusy}>{settingsBusy ? <LoaderCircle size={14} className="spinner"/> : <Check size={14}/>}Save settings</button></div></form></section></div>}
-      {notificationsOpen && <aside className="notification-panel" aria-label="Notifications"><div className="notification-heading"><div><span className="dialog-kicker">ACTIVITY</span><h2>Notifications</h2></div><button className="dialog-close" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}>×</button></div>{notifications.length ? <div className="notification-list">{notifications.map((item) => <article className="notification-item" key={item.id}><span className={item.error ? "notification-icon error" : "notification-icon"}>{item.error ? <TriangleAlert size={15} /> : <Check size={15} />}</span><div><strong>{item.title}</strong><p>{item.detail}</p></div></article>)}</div> : <div className="notifications-empty"><span><Bell size={17} /></span><strong>You’re all caught up</strong><p>Forecast completions and data errors will appear here. Price alerts aren’t configured.</p></div>}<div className="notification-foot">This activity is stored only for this session.</div></aside>}
+      {notificationsOpen && <div className="notification-dismiss-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setNotificationsOpen(false); }}><aside className="notification-panel" aria-label="Notifications" onMouseDown={(event) => event.stopPropagation()}><div className="notification-heading"><div><span className="dialog-kicker">ACTIVITY</span><h2>Notifications</h2></div><button className="dialog-close" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}>×</button></div>{notifications.length ? <div className="notification-list">{notifications.map((item) => <article className="notification-item" key={item.id}><span className={item.error ? "notification-icon error" : "notification-icon"}>{item.error ? <TriangleAlert size={15} /> : <Check size={15} />}</span><div><strong>{item.title}</strong><p>{item.detail}</p></div></article>)}</div> : <div className="notifications-empty"><span><Bell size={17} /></span><strong>You’re all caught up</strong><p>Forecast completions and data errors will appear here. Price alerts aren’t configured.</p></div>}<div className="notification-foot">This activity is stored only for this session.</div></aside></div>}
     </main>
   );
 }

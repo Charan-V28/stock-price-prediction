@@ -64,3 +64,17 @@
 .app-frame[data-theme="light"] .watch-result-name strong,.app-frame[data-theme="light"] .watch-selected-stock strong{color:#243127}
 .app-frame[data-theme="light"] .watch-selected-stock{border-color:#d5e5c3;background:#f2f7ed}
 @media(max-width:600px){.watch-more{opacity:1}.watchlist-dialog{padding:22px 18px}.watch-item-menu{right:1px}}
+.share-dialog{width:min(100%,480px)}
+.share-dialog>p{margin-bottom:18px}
+.share-dialog>label{display:block;margin-bottom:7px;color:#b9c4bb;font-size:10px;font-weight:700}
+.share-link-field{display:flex;align-items:center;gap:6px}
+.share-link-field input{min-width:0;font:10px var(--font-mono);color:#d7e2d7}
+.share-copy-button{width:38px;height:38px;flex:none;display:grid;place-items:center;border:1px solid #354137;border-radius:7px;background:#172019;color:var(--lime);cursor:pointer}
+.share-copy-button:hover{border-color:#8eb948;background:#202b1b}
+.share-status{margin:9px 0 0!important;color:#bce68d!important;font-size:10px!important}
+.notification-dismiss-layer{position:fixed;inset:0;z-index:24}
+.notification-dismiss-layer .notification-panel{z-index:25}
+.app-frame[data-theme="light"] .share-dialog>label{color:#435046}
+.app-frame[data-theme="light"] .share-link-field input{color:#243127}
+.app-frame[data-theme="light"] .share-copy-button{border-color:#d4ded3;background:#edf5e7;color:#42631e}
+@media(max-width:600px){.share-dialog{padding:22px 18px}.share-link-field input{font-size:9px}}

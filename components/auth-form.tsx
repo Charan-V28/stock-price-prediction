@@ -12,6 +12,11 @@ function callbackUrl(next: string) {
   return url.toString();
 }
 
+function nextPath() {
+  const requested = new URLSearchParams(window.location.search).get("next");
+  return requested?.startsWith("/") && !requested.startsWith("//") ? requested : "/";
+}
+
 export default function AuthForm({ configured }: { configured: boolean }) {
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
@@ -21,10 +26,20 @@ export default function AuthForm({ configured }: { configured: boolean }) {
   const [oauthBusy, setOauthBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [sharedSymbol, setSharedSymbol] = useState<string | null>(null);
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has("error")) {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("error")) {
       setError("We couldn’t complete sign-in. Please try again.");
+    }
+    const next = params.get("next");
+    if (next) {
+      try {
+        const destination = new URL(next, window.location.origin);
+        const shared = destination.searchParams.get("symbol")?.toUpperCase();
+        if (destination.origin === window.location.origin && destination.pathname === "/" && shared && /^[A-Z0-9.^_-]{1,15}$/.test(shared)) setSharedSymbol(shared);
+      } catch { /* Ignore malformed return paths and use the normal sign-in copy. */ }
     }
   }, []);
 
@@ -43,7 +58,7 @@ export default function AuthForm({ configured }: { configured: boolean }) {
     try {
       const { error: signInError } = await supabase.auth.signInWithOAuth({
         provider: "google",
-      options: { redirectTo: callbackUrl("/") },
+        options: { redirectTo: callbackUrl(nextPath()) },
       });
       if (signInError) {
         setError(signInError.message);
@@ -80,13 +95,13 @@ export default function AuthForm({ configured }: { configured: boolean }) {
         const { data, error: signupError } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: callbackUrl("/") },
+          options: { emailRedirectTo: callbackUrl(nextPath()) },
         });
         if (signupError) setError(signupError.message);
         else if (data.session) {
-          window.location.assign("/");
+          window.location.assign(nextPath());
         } else {
-          setNotice("Your account is ready. Check your inbox to verify your email; the confirmation link will take you to the forecast dashboard.");
+          setNotice(sharedSymbol ? `Check your inbox to verify your email. The confirmation link will take you back to the shared ${sharedSymbol} forecast.` : "Your account is ready. Check your inbox to verify your email; the confirmation link will take you to the forecast dashboard.");
         }
         setBusy(false);
         return;
@@ -98,7 +113,7 @@ export default function AuthForm({ configured }: { configured: boolean }) {
         setBusy(false);
         return;
       }
-      window.location.assign("/");
+      window.location.assign(nextPath());
     } catch {
       setError("Could not reach the sign-in service. Check your connection and try again.");
       setBusy(false);
@@ -113,7 +128,7 @@ export default function AuthForm({ configured }: { configured: boolean }) {
       <div className="auth-card-heading">
         <span className="auth-step">PERSONAL WORKSPACE</span>
         <h2>{isReset ? "Reset your password" : isSignup ? "Create your account" : "Welcome back"}</h2>
-        <p>{isReset ? "We’ll email a secure link if an account matches." : isSignup ? "Start a free account for your personal forecast lab." : "Sign in to continue to your forecast lab."}</p>
+        <p>{isReset ? "We’ll email a secure link if an account matches." : sharedSymbol ? (isSignup ? `Create a free account to view the shared ${sharedSymbol} forecast.` : `Sign in to view the shared ${sharedSymbol} forecast.`) : isSignup ? "Start a free account for your personal forecast lab." : "Sign in to continue to your forecast lab."}</p>
       </div>
 
       <button className="auth-google-button" type="button" onClick={() => void signInWithGoogle()} disabled={!configured || busy}>
